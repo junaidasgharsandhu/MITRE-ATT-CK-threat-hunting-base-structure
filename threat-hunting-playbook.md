@@ -413,3 +413,45 @@ AzureActivity
 | order by TimeGenerated, Caller desc
 | project TimeGenerated, OperationNameValue, ResourceGroup, Caller, CategoryValue
 ```
+
+## KQL Cheat Sheet – Pre vs Post Event Process Comparison (Delta Analysis)
+
+### Purpose
+Compare process execution behavior **before and after a known event** (crash, alert, outage) to identify:
+- New processes
+- Stopped processes
+- Significant execution increases or decreases
+
+This technique is used to validate incidents, detect persistence, and identify environmental degradation.
+
+---
+
+### KQL Query – Process Delta Comparison
+
+```kql
+// Define the PRE-event window
+let pre = 
+DeviceProcessEvents
+| where DeviceName == "windows-target-1"            // Target host
+| where TimeGenerated between                       // Time window BEFORE event
+    (datetime(2025-11-20) .. datetime(2025-11-24))
+| summarize PreCount = count() by FileName;          // Count executions per process
+
+// Define the POST-event window
+let post =
+DeviceProcessEvents
+| where DeviceName == "windows-target-1"             // Same host
+| where TimeGenerated between                        // Time window AFTER event
+    (datetime(2025-11-24) .. datetime(2025-11-28))
+| summarize PostCount = count() by FileName;         // Count executions per process
+
+// Join both datasets to compare behavior
+pre
+| join kind=fullouter post on FileName               // Include processes that started or stopped
+| extend 
+    PreCount  = coalesce(PreCount, 0),               // Replace nulls with 0
+    PostCount = coalesce(PostCount, 0)
+| extend Delta = PostCount - PreCount                // Calculate execution change
+| order by Delta desc                                // Show biggest increases first
+
+
