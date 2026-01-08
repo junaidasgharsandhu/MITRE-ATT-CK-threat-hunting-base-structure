@@ -407,7 +407,7 @@ DeviceProcessEvents
 AzureActivity
 | where TimeGenerated >= ago(7d)
 | where ResourceProviderValue =~ "Microsoft.Compute"
-| where tolower(ResourceGroup) == tolower("student-rg-645ed35f0a6e51de3926c6044c1fc4fef893ff31a9e1d379e675a20f11f4cd8b")
+| where tolower(ResourceGroup) == tolower("student-rg")
 | where OperationNameValue contains "DELETE"
 | where ActivityStatusValue == "Success"
 | order by TimeGenerated, Caller desc
