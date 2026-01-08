@@ -57,28 +57,134 @@
 - Rare geo / impossible travel patterns 
 - First-seen IPs for the account or host
 
-
 ### Primary Tables
-** Endpoint (MDE via Sentinel) ** 
-- `DeviceLogonEvents` (from MDE)
-- `SigninLogs` (Azure AD)
+
+**Endpoint (MDE via Sentinel)** 
+
+- `DeviceLogonEvents` 
+- `DeviceNetworkEvents` 
+
 
 ### High-Signal Indicators
-- `LogonType == RemoteInteractive`
+- `LogonType == RemoteInteractive` (RDP) OR `LogonType == Network`
 - External `RemoteIP`
-- `ResultType == 0` (Azure AD successful sign-in)
+-  `ActionType == LogonSuccess` after multiple failures
+-  First-time-seen IP for the account in the last 30–90 days
 
 ### Go-To Sentinel Query
-```kql
+
+**MDE: Successful logons + external IP summary**
+```
 let startTime = datetime(2025-10-24 18:55:00);
 let endTime   = datetime(2025-12-24 19:10:00);
 DeviceLogonEvents
-| where TimeGenerated  between (startTime .. endTime )
-| where DeviceName contains "Azuki"
-| summarize Count = count()
-    by RemoteIP, ActionType, LogonType
-| order by Count desc
+| where TimeGenerated between (startTime .. endTime)
+| where DeviceName has "azuki"
+| where ActionType == "LogonSuccess"
+| summarize Count=count(), FirstSeen=min(TimeGenerated), LastSeen=max(TimeGenerated)
+  by AccountName, LogonType, RemoteIP
+| order by Count desc, LastSeen desc
 ````
+## Initial Access Validation — Failed Logons Followed by Success (Same IP/User)
+
+**Title:** Failure-to-Success Correlation (Password Spray / Brute Force / Stolen Creds)  
+**Use case:** Use this during **Initial Access (TA0001)** to confirm suspicious access patterns where an attacker generates multiple failed logons and then successfully authenticates shortly after (often from the same source IP). This helps validate **credential guessing**, **password spraying**, or **use of newly-compromised credentials**.
+
+### Optional parameters (edit as needed)
+- `deviceFilter`: set to a hostname (or partial) to scope to a single device, or leave empty for all devices  
+- `window`: how long after the *last failure* you want to consider a “related” success  
+
+```kql
+// =====================================================
+// Query: Failure-to-Success Correlation (Initial Access)
+// Purpose: Find accounts/IPs where logon failures are
+//          followed by a successful logon within a
+//          defined time window.
+// Tables: DeviceLogonEvents (MDE)
+// =====================================================
+
+// Time bounds for the investigation window
+let startTime   = datetime(2025-10-24 18:55:00);
+let endTime     = datetime(2025-12-24 19:10:00);
+
+// Correlation window: success must occur within this timespan after the last failure
+let window      = 30m;
+
+// Optional: Scope to a specific device (leave empty "" to search all devices)
+let deviceFilter = ""; // e.g., "azuki-sl" or "windows-target-1"
+
+// -------------------------------
+// Collect failed logons
+// -------------------------------
+let fails =
+DeviceLogonEvents
+| where TimeGenerated between (startTime .. endTime)
+| where isempty(deviceFilter) or DeviceName has deviceFilter
+| where ActionType == "LogonFailed"
+| summarize
+    FailCount = count(),
+    LastFail  = max(TimeGenerated)
+  by AccountName, RemoteIP, LogonType;
+
+// -------------------------------
+// Collect successful logons
+// -------------------------------
+let success =
+DeviceLogonEvents
+| where TimeGenerated between (startTime .. endTime)
+| where isempty(deviceFilter) or DeviceName has deviceFilter
+| where ActionType == "LogonSuccess"
+| summarize
+    FirstSuccess = min(TimeGenerated),
+    SuccessCount = count()
+  by AccountName, RemoteIP, LogonType;
+
+// -------------------------------
+// Correlate: success happens soon after last failure
+// -------------------------------
+fails
+| join kind=inner success on AccountName, RemoteIP, LogonType
+| where FirstSuccess >= LastFail
+| where FirstSuccess <= LastFail + window
+| project
+    AccountName,
+    RemoteIP,
+    LogonType,
+    FailCount,
+    LastFail,
+    FirstSuccess,
+    SuccessCount
+| order by FirstSuccess asc
+```
+
+
+
+###  Tier 2
+
+**Azure AD: Successful sign-ins with context (IP, location, user agent, CA)**
+```
+let startTime = datetime(2025-10-24 18:55:00);
+let endTime   = datetime(2025-12-24 19:10:00);
+SigninLogs
+| where TimeGenerated between (startTime .. endTime)
+| where ResultType == 0
+| project TimeGenerated, UserPrincipalName, AppDisplayName, IPAddress,
+          Location, UserAgent, ConditionalAccessStatus, AuthenticationRequirement
+| order by TimeGenerated desc
+```
+
+**First-seen IP for a user (great for confirming suspicious source)**
+```
+let lookback = 30d;
+SigninLogs
+| where TimeGenerated > ago(lookback)
+| where ResultType == 0
+| summarize FirstSeen=min(TimeGenerated), LastSeen=max(TimeGenerated), Count=count()
+  by UserPrincipalName, IPAddress
+| order by FirstSeen asc
+```
+
+
 
 ---
 
