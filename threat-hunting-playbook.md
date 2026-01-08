@@ -46,14 +46,20 @@
 ---
 
 ## Initial Access (TA0001)
-> Think: How did the attacker gain access..
+> Think: How did the attacker gain access, from where and using what identity
 
 ### What to Look For
 - Successful logons from external IPs
+- Failures followed by success (password spray/ brute force)
 - RDP / SMB / SSH access
 - Valid account abuse
+- New Device / New browser 
+- Rare geo / impossible travel patterns 
+- First-seen IPs for the account or host
+
 
 ### Primary Tables
+** Endpoint (MDE via Sentinel) ** 
 - `DeviceLogonEvents` (from MDE)
 - `SigninLogs` (Azure AD)
 
