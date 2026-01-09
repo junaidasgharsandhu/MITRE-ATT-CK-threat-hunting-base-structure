@@ -7,7 +7,7 @@
 ---
 
 ## Table of Contents
-
+- [Sentinel Log Types & Control Plane vs Data Plane](#sentinel-log-types--control-plane-vs-data-plane)
 - [Standard Sentinel Hunt Flow](#standard-sentinel-hunt-flow)
 - [MITRE ATT&CK Phases — Sentinel View](#mitre-attck-phases--sentinel-view)
   - [Initial Access (TA0001)](#initial-access-ta0001)
@@ -24,6 +24,131 @@
 - [Sentinel Analyst Final Checklist](#sentinel-analyst-final-checklist)
 
 ---
+
+## Sentinel Log Types & Control Plane vs Data Plane
+
+Understanding **where logs originate** and **what layer they represent** is critical for efficient threat hunting in Microsoft Sentinel. Not all logs answer the same questions, and mixing control-plane and data-plane telemetry can lead to missed findings or incorrect conclusions.
+
+### Log Ingestion Flow (High-Level)
+Microsoft Sentinel ingests telemetry from multiple sources (MDE, Entra ID, Azure platform logs) into **Log Analytics**, where they become queryable for hunting, detections, and investigations.
+
+![Log ingestion flow into Microsoft Sentinel](images/image-1.png)
+
+---
+
+### Control Plane vs Data Plane — Why It Matters
+
+| Layer | What It Answers | Example Questions |
+|-----|----------------|------------------|
+| **Control Plane** | *Who changed or accessed configuration?* | Who deleted a VM? Who changed NSG rules? Who disabled logging? |
+| **Data Plane** | *What actually happened inside the workload?* | Who logged into the VM? What process executed? What network connection occurred? |
+
+![Azure control plane vs data plane hierarchy](images/image.png)
+
+
+---
+
+### Common Sentinel Log Categories
+
+#### Entra ID / Azure AD Logs (Control Plane – Identity)
+- **Tables:** `SigninLogs`, `AuditLogs`
+- Track authentication activity and directory changes at the tenant level
+- Used for detecting:
+  - Suspicious sign-ins
+  - MFA bypass or failures
+  - Risky users and sessions
+---
+
+> Example Query: Review User Sign-in Activity
+
+**Use case:**  
+Validate suspicious authentication events by reviewing IP address, location, device details, and user agent for a specific user or identity.
+
+```kql
+SigninLogs
+| where Identity contains "<USER_OR_OBJECT_ID>"
+| project
+    TimeGenerated,
+    OperationName,
+    Resource,
+    IPAddress,
+    LocationDetails,
+    DeviceDetail,
+    UserAgent
+| order by TimeGenerated desc
+```
+![SiginLogs-Result](images/SiginLogs-Result.png)
+
+
+#### Azure Activity Logs (Control Plane – Subscription)
+- **Table:** `AzureActivity`
+- Records management operations on Azure resources (PUT, DELETE, UPDATE)
+- Used for detecting:
+  - Resource deletion or modification
+  - Privilege abuse
+  - Infrastructure tampering
+
+> Example Query: Review Azure Control Plane Activity
+
+**Use case:**
+Review **management-plane actions** performed against Azure resources (such as virtual machines, disks, or network components) to identify suspicious administrative behavior, failed execution attempts, or abuse of service principals.
+
+This query is especially useful for detecting:
+
+* Azure Run Command usage
+* Unauthorized configuration changes
+* Failed or blocked administrative actions
+* Service principal activity targeting resources
+
+```
+AzureActivity
+| where ResourceGroup contains "<RESOURCE_GROUP_NAME>"
+| project
+    TimeGenerated,
+    OperationNameValue,
+    ActivityStatusValue,
+    ActivitySubstatusValue,
+    ResourceProviderValue,
+    Resource,
+    Caller,
+    CallerIpAddress,
+    CategoryValue,
+    CorrelationId
+| order by TimeGenerated asc
+```
+![AzureActivity Table](images/AzureActivity%20Table.png)
+
+---
+
+
+#### Azure Resource Logs (Data Plane – Workload)
+- Formerly known as *Diagnostic Logs*
+- Capture actions **within** a resource (e.g., SQL queries, storage access, Key Vault access)
+- Used for detecting:
+  - Data access
+  - Service misuse
+  - Application-level abuse
+
+#### Defender for Endpoint Logs (Data Plane – Endpoint)
+- **Tables:** `DeviceProcessEvents`, `DeviceLogonEvents`, `DeviceNetworkEvents`, etc.
+- Capture real activity on endpoints
+- Used for detecting:
+  - Initial access
+  - Execution
+  - Persistence
+  - Lateral movement
+  - Exfiltration
+
+---
+
+### Threat Hunting Guidance
+- Use **control-plane logs** to answer *who changed what and when*
+- Use **data-plane logs** to answer *what actually happened on the system*
+- Most **attack behavior** appears in **data-plane telemetry**
+- Most **environment impact or tampering** appears in **control-plane telemetry**
+
+Understanding this distinction helps you choose the **right table first**, reducing noise and speeding up investigations.
+
 
 ## Standard Sentinel Hunt Flow
 
@@ -63,6 +188,7 @@
 
 - `DeviceLogonEvents` 
 - `DeviceNetworkEvents` 
+- `SignInLogs` (To View ENTRA ID(AD) Logs for Azure.. remember its Azure logins)
 
 
 ### High-Signal Indicators
@@ -157,8 +283,6 @@ fails
 | order by FirstSuccess asc
 ```
 
-
-
 ###  Tier 2
 
 **Azure AD: Successful sign-ins with context (IP, location, user agent, CA)**
@@ -201,7 +325,7 @@ SigninLogs
 ### Primary Tables
 
 * `DeviceProcessEvents`
-* `SecurityEvent` (Event ID 4688)
+
 
 ### Common Binaries
 
