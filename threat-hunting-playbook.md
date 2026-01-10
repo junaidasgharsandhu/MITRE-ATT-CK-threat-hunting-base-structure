@@ -83,10 +83,10 @@ SigninLogs
 #### Azure Activity Logs (Control Plane – Subscription)
 - **Table:** `AzureActivity`
 - Records management operations on Azure resources (PUT, DELETE, UPDATE)
-- Used for detecting:
-  - Resource deletion or modification
+- You can use this table to find VMs created in a Resource Group etc.
+- Also can be used for detecting:
+  - Resource/VM deletion or modification
   - Privilege abuse
-  - Infrastructure tampering
 
 > Example Query: Review Azure Control Plane Activity
 
@@ -117,7 +117,21 @@ AzureActivity
 | order by TimeGenerated asc
 ```
 ![AzureActivity Table](images/AzureActivity%20Table.png)
+> To view all the VMs created in your ResourceGroup
 
+```
+AzureActivity
+| where TimeGenerated > ago(200d)
+| where ResourceGroup has "80aefc1da61a82315cd63933b0d6aa6281026fd5428f1ea664963480857ff8eb"
+| where OperationNameValue == "MICROSOFT.COMPUTE/VIRTUALMACHINES/WRITE"
+| where ActivityStatusValue == "Success"
+| extend rid = tolower(_ResourceId) // Normalize casing so string matching and splitting is reliable
+| extend AfterVM = split(rid, "/virtualmachines/")[1] // [1] means after the anchor, while [0] means before
+| extend VMName = tostring(split(AfterVM, "/")[0]) Extract the VM name by taking the 0th index before the next "/"
+| summarize CreatedTime = min(TimeGenerated), Caller = any(Caller) by VMName
+| order by CreatedTime desc
+```
+![Resource-GroupVMCreations](images/Resource-GroupVMCreations.png)
 ---
 
 
